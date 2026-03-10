@@ -416,11 +416,12 @@ body {
   border-radius: var(--radius);
   overflow: hidden;
   background: #000;
-  aspect-ratio: 1;
-  max-height: 280px;
+  width: 100%;
+  min-height: 260px;
 }
 
 #scanner-container > div { border-radius: var(--radius) !important; }
+#scanner-container video { border-radius: var(--radius) !important; }
 
 .scan-hint {
   text-align: center;

@@ -232,31 +232,22 @@ function startScanner() {
   const container = document.getElementById('scanner-container');
   container.innerHTML = '';
 
-  // html5-qrcode supports: QR, Code128, EAN-13, EAN-8, UPC-A, UPC-E, etc.
-  scannerInstance = new Html5Qrcode('scanner-container');
+  scannerInstance = new Html5Qrcode('scanner-container', { verbose: false });
 
+  // Keep config simple for widest mobile compatibility —
+  // no formatsToSupport (scans all), no aspectRatio override.
   const config = {
     fps: 10,
-    qrbox: { width: 240, height: 160 },
-    aspectRatio: 1.0,
-    formatsToSupport: [
-      Html5QrcodeSupportedFormats.EAN_13,
-      Html5QrcodeSupportedFormats.EAN_8,
-      Html5QrcodeSupportedFormats.UPC_A,
-      Html5QrcodeSupportedFormats.UPC_E,
-      Html5QrcodeSupportedFormats.CODE_128,
-      Html5QrcodeSupportedFormats.QR_CODE,
-    ]
+    qrbox: { width: 250, height: 150 },
   };
 
   scannerInstance.start(
     { facingMode: 'environment' },
     config,
     onBarcodeScanned,
-    () => {}
+    () => {} // per-frame errors — ignore
   ).catch(err => {
-    console.warn('Scanner error:', err);
-    // Only fall back if we haven't already cleaned up
+    console.warn('Scanner start error:', err);
     if (document.getElementById('modal-add').classList.contains('hidden')) return;
     stopScanner();
     if (document.getElementById('scan-view').classList.contains('hidden')) return;
