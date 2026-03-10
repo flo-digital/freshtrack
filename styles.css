@@ -385,7 +385,25 @@ body {
 #scanner-container > div { border-radius: var(--radius) !important; }
 #scanner-container video { border-radius: var(--radius) !important; }
 
-.scan-hint { text-align: center; font-size: 13px; color: var(--text-3); margin: 10px 0; }
+.scan-hint { text-align: center; font-size: 13px; color: var(--text-3); margin: 8px 0 6px; }
+
+.btn-photo {
+  display: block;
+  width: 100%;
+  padding: 12px;
+  margin-top: 6px;
+  border-radius: var(--radius-sm);
+  border: 1.5px dashed rgba(90,200,250,0.45);
+  background: rgba(0,122,255,0.10);
+  color: var(--blue-light);
+  font-size: 14px; font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+.btn-photo:hover  { background: rgba(0,122,255,0.18); border-color: rgba(90,200,250,0.7); }
+.btn-photo:active { transform: scale(0.98); }
 
 .scan-result {
   background: rgba(0,122,255,0.12);

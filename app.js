@@ -252,7 +252,7 @@ async function startNativeScanner() {
         width:88%;height:32%;border-radius:10px;
         box-shadow:0 0 0 9999px rgba(0,0,0,0.45)"></div>
     </div>
-    <div id="tap-hint" style="
+    <div style="
       position:absolute;bottom:10px;width:100%;text-align:center;
       color:rgba(255,255,255,0.55);font-size:12px;pointer-events:none">
       Tap to focus
@@ -284,54 +284,112 @@ async function startNativeScanner() {
   container.addEventListener('click', async (e) => {
     const track = nativeScannerStream?.getVideoTracks()[0];
     if (!track) return;
-
-    // Show animated focus ring at tap point
     const rect = container.getBoundingClientRect();
     showFocusRing(e.clientX - rect.left, e.clientY - rect.top, container);
-
     try {
       const cap = track.getCapabilities?.() || {};
       const modes = cap.focusMode || [];
       if (modes.includes('single-shot') || modes.includes('manual')) {
-        // Chrome: pointOfInterest lets you focus at exact tap location
         const nx = (e.clientX - rect.left) / rect.width;
         const ny = (e.clientY - rect.top) / rect.height;
         await track.applyConstraints({
           advanced: [{ focusMode: 'single-shot', pointOfInterest: { x: nx, y: ny } }]
         });
       } else if (modes.includes('continuous')) {
-        // iOS: toggle to single-shot to force a refocus, then back
         await track.applyConstraints({ advanced: [{ focusMode: 'single-shot' }] });
         setTimeout(() => {
           track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }).catch(() => {});
         }, 800);
       }
-    } catch (_) { /* Focus API not supported — ring still shows */ }
+    } catch (_) {}
   });
 
+  // ---- Detection loop via canvas (more compatible than detect(video) on Safari) ----
   const formats = ['ean_13','ean_8','upc_a','upc_e','code_128','qr_code','data_matrix'];
   let detector;
-  try {
-    detector = new BarcodeDetector({ formats });
-  } catch(_) {
-    detector = new BarcodeDetector();
-  }
+  try { detector = new BarcodeDetector({ formats }); }
+  catch(_) { detector = new BarcodeDetector(); }
+
+  // Offscreen canvas to grab individual frames
+  const offCanvas = document.createElement('canvas');
+  const offCtx = offCanvas.getContext('2d', { willReadFrequently: true });
 
   async function scanFrame() {
     if (!nativeScannerActive) return;
-    if (video.readyState >= video.HAVE_ENOUGH_DATA) {
+    if (video.readyState >= video.HAVE_ENOUGH_DATA && video.videoWidth > 0) {
+      offCanvas.width  = video.videoWidth;
+      offCanvas.height = video.videoHeight;
+      offCtx.drawImage(video, 0, 0);
       try {
-        const results = await detector.detect(video);
+        const results = await detector.detect(offCanvas);
         if (results.length > 0) {
           onBarcodeScanned(results[0].rawValue);
-          return;
+          return; // stop loop — onBarcodeScanned calls stopScanner
         }
-      } catch (_) {}
+      } catch (e) {
+        console.warn('detect error:', e?.message);
+      }
     }
-    requestAnimationFrame(scanFrame);
+    setTimeout(scanFrame, 200); // ~5 fps — gives detector breathing room
   }
 
-  video.addEventListener('loadeddata', () => requestAnimationFrame(scanFrame), { once: true });
+  video.addEventListener('loadeddata', () => setTimeout(scanFrame, 300), { once: true });
+}
+
+/* ---------- Photo capture fallback (native iOS camera) ---------- */
+function capturePhoto() {
+  const input = document.createElement('input');
+  input.type    = 'file';
+  input.accept  = 'image/*';
+  input.capture = 'environment'; // opens rear camera directly on iOS
+
+  input.onchange = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    showToast('Reading barcode…');
+
+    const url = URL.createObjectURL(file);
+    const img  = new Image();
+    img.onload = async () => {
+      const canvas = document.createElement('canvas');
+      canvas.width  = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+      canvas.getContext('2d').drawImage(img, 0, 0);
+      URL.revokeObjectURL(url);
+
+      let detected = false;
+
+      // Try native BarcodeDetector first
+      if ('BarcodeDetector' in window) {
+        try {
+          const detector = new BarcodeDetector();
+          const results  = await detector.detect(canvas);
+          if (results.length > 0) {
+            detected = true;
+            onBarcodeScanned(results[0].rawValue);
+          }
+        } catch(_) {}
+      }
+
+      // Fallback: html5-qrcode image scan
+      if (!detected) {
+        try {
+          const reader = new Html5Qrcode('scanner-container');
+          const result = await reader.scanPromise
+            ? reader.scanPromise(file)
+            : null;
+          if (result) { detected = true; onBarcodeScanned(result); }
+        } catch(_) {}
+      }
+
+      if (!detected) showToast('No barcode found — try again or enter manually', 'error');
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); showToast('Could not read image', 'error'); };
+    img.src = url;
+  };
+
+  input.click();
 }
 
 /* Animated focus ring shown at tap location */
@@ -406,10 +464,10 @@ async function onBarcodeScanned(barcode) {
   if (scannedBarcode === barcode) return; // debounce
   scannedBarcode = barcode;
 
-  // Flash the container green so the user knows it worked
+  // Flash the container blue so the user knows it worked
   const container = document.getElementById('scanner-container');
-  container.style.boxShadow = '0 0 0 4px #1a8c5a';
-  setTimeout(() => { container.style.boxShadow = ''; }, 600);
+  container.style.boxShadow = '0 0 0 4px #007AFF, 0 0 24px rgba(0,122,255,0.6)';
+  setTimeout(() => { container.style.boxShadow = ''; }, 700);
 
   stopScanner();
 

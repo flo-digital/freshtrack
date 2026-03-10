@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#1a8c5a" />
   <title>FreshTrack – Fridge Expiry Tracker</title>
   <link rel="manifest" href="manifest.json" />
-  <link rel="stylesheet" href="styles.css?v=3" />
+  <link rel="stylesheet" href="styles.css?v=4" />
   <!-- html5-qrcode for barcode scanning -->
   <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 </head>
@@ -83,7 +83,8 @@
       <!-- Scanner View -->
       <div id="scan-view">
         <div id="scanner-container"></div>
-        <p class="scan-hint">Point camera at a product barcode</p>
+        <p class="scan-hint">Hold barcode inside the frame — or tap below</p>
+        <button class="btn-photo" id="btn-photo" onclick="capturePhoto()">📷 Take Photo of Barcode</button>
         <div id="scan-result" class="scan-result hidden">
           <div class="scan-found">
             <img id="scan-product-img" src="" alt="" class="product-img hidden" />
