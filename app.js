@@ -349,44 +349,26 @@ function capturePhoto() {
 
     showToast('Reading barcode…');
 
-    const url = URL.createObjectURL(file);
-    const img  = new Image();
-    img.onload = async () => {
-      const canvas = document.createElement('canvas');
-      canvas.width  = img.naturalWidth;
-      canvas.height = img.naturalHeight;
-      canvas.getContext('2d').drawImage(img, 0, 0);
-      URL.revokeObjectURL(url);
+    // Html5Qrcode.scanFile() is designed exactly for this:
+    // it loads the image, draws it to canvas, and runs ZXing detection.
+    // We need a tiny hidden div to instantiate the scanner.
+    const tmpId  = 'photo-scan-tmp';
+    let   tmpDiv = document.getElementById(tmpId);
+    if (!tmpDiv) {
+      tmpDiv = document.createElement('div');
+      tmpDiv.id = tmpId;
+      tmpDiv.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:1px;height:1px;overflow:hidden';
+      document.body.appendChild(tmpDiv);
+    }
 
-      let detected = false;
-
-      // Try native BarcodeDetector first
-      if ('BarcodeDetector' in window) {
-        try {
-          const detector = new BarcodeDetector();
-          const results  = await detector.detect(canvas);
-          if (results.length > 0) {
-            detected = true;
-            onBarcodeScanned(results[0].rawValue);
-          }
-        } catch(_) {}
-      }
-
-      // Fallback: html5-qrcode image scan
-      if (!detected) {
-        try {
-          const reader = new Html5Qrcode('scanner-container');
-          const result = await reader.scanPromise
-            ? reader.scanPromise(file)
-            : null;
-          if (result) { detected = true; onBarcodeScanned(result); }
-        } catch(_) {}
-      }
-
-      if (!detected) showToast('No barcode found — try again or enter manually', 'error');
-    };
-    img.onerror = () => { URL.revokeObjectURL(url); showToast('Could not read image', 'error'); };
-    img.src = url;
+    try {
+      const scanner = new Html5Qrcode(tmpId);
+      const barcode = await scanner.scanFile(file, /* showImage= */ false);
+      onBarcodeScanned(barcode);
+    } catch (err) {
+      console.warn('Photo scan failed:', err);
+      showToast('No barcode found — try a closer photo or use Manual Entry', 'error');
+    }
   };
 
   input.click();
