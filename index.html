@@ -6,8 +6,10 @@
   <meta name="theme-color" content="#1a8c5a" />
   <title>FreshTrack – Fridge Expiry Tracker</title>
   <link rel="manifest" href="manifest.json" />
-  <link rel="stylesheet" href="styles.css?v=6" />
-  <!-- html5-qrcode for barcode photo scanning fallback -->
+  <link rel="stylesheet" href="styles.css?v=7" />
+  <!-- ZXing: primary barcode decoder (TRY_HARDER, multi-format) -->
+  <script src="https://unpkg.com/@zxing/library@0.20.0/umd/index.min.js"></script>
+  <!-- html5-qrcode: last-resort barcode scanning fallback -->
   <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 </head>
 <body>
@@ -213,6 +215,6 @@
   <script src="sw-register.js"></script>
   <script src="storage.js"></script>
   <script src="api.js"></script>
-  <script src="app.js?v=3"></script>
+  <script src="app.js?v=4"></script>
 </body>
 </html>
