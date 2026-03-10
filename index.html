@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#1a8c5a" />
+  <title>FreshTrack – Fridge Expiry Tracker</title>
+  <link rel="manifest" href="manifest.json" />
+  <link rel="stylesheet" href="styles.css?v=2" />
+  <!-- html5-qrcode for barcode scanning -->
+  <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+</head>
+<body>
+  <div id="app">
+    <!-- Header -->
+    <header class="app-header">
+      <div class="header-inner">
+        <div class="brand">
+          <span class="brand-icon">🥬</span>
+          <span class="brand-name">FreshTrack</span>
+        </div>
+        <div class="header-actions">
+          <button id="notif-btn" class="icon-btn" title="Enable notifications">🔔</button>
+          <button id="settings-btn" class="icon-btn" title="Settings">⚙️</button>
+        </div>
+      </div>
+      <!-- Stats bar -->
+      <div class="stats-bar">
+        <div class="stat">
+          <span class="stat-num" id="stat-total">0</span>
+          <span class="stat-label">Items</span>
+        </div>
+        <div class="stat stat-warn">
+          <span class="stat-num" id="stat-expiring">0</span>
+          <span class="stat-label">Expiring Soon</span>
+        </div>
+        <div class="stat stat-danger">
+          <span class="stat-num" id="stat-expired">0</span>
+          <span class="stat-label">Expired</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- Filter Tabs -->
+    <div class="filter-tabs">
+      <button class="tab active" data-filter="all">All</button>
+      <button class="tab" data-filter="expiring">⚠️ Expiring Soon</button>
+      <button class="tab" data-filter="expired">🔴 Expired</button>
+    </div>
+
+    <!-- Search -->
+    <div class="search-bar">
+      <span class="search-icon">🔍</span>
+      <input type="text" id="search-input" placeholder="Search items..." />
+    </div>
+
+    <!-- Fridge List -->
+    <main id="fridge-list" class="fridge-list">
+      <div class="empty-state" id="empty-state">
+        <div class="empty-icon">🧊</div>
+        <p>Your fridge is empty!</p>
+        <p class="empty-sub">Tap <strong>+</strong> to add your first item.</p>
+      </div>
+    </main>
+
+    <!-- FAB Add Button -->
+    <button id="fab-add" class="fab" title="Add item">+</button>
+  </div>
+
+  <!-- ===== ADD ITEM MODAL ===== -->
+  <div id="modal-add" class="modal hidden">
+    <div class="modal-backdrop" id="modal-add-backdrop"></div>
+    <div class="modal-sheet">
+      <div class="modal-handle"></div>
+      <h2 class="modal-title">Add Item</h2>
+
+      <!-- Scan / Manual tabs -->
+      <div class="modal-tabs">
+        <button class="modal-tab active" id="tab-scan">📷 Scan Barcode</button>
+        <button class="modal-tab" id="tab-manual">✏️ Manual Entry</button>
+      </div>
+
+      <!-- Scanner View -->
+      <div id="scan-view">
+        <div id="scanner-container"></div>
+        <p class="scan-hint">Point camera at a product barcode</p>
+        <div id="scan-result" class="scan-result hidden">
+          <div class="scan-found">
+            <img id="scan-product-img" src="" alt="" class="product-img hidden" />
+            <div class="scan-info">
+              <p class="scan-product-name" id="scan-product-name">Loading…</p>
+              <p class="scan-barcode-val" id="scan-barcode-val"></p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Manual / Edit Form -->
+      <div id="manual-view" class="hidden">
+        <div class="form-group">
+          <label>Product Name *</label>
+          <input type="text" id="form-name" placeholder="e.g. Greek Yogurt" />
+        </div>
+        <div class="form-group">
+          <label>Barcode (optional)</label>
+          <input type="text" id="form-barcode" placeholder="e.g. 0123456789" />
+        </div>
+        <div class="form-group">
+          <label>Category</label>
+          <select id="form-category">
+            <option value="dairy">🥛 Dairy</option>
+            <option value="meat">🥩 Meat & Fish</option>
+            <option value="produce">🥦 Produce</option>
+            <option value="leftovers">🍱 Leftovers</option>
+            <option value="drinks">🥤 Drinks</option>
+            <option value="condiments">🫙 Condiments</option>
+            <option value="other" selected>📦 Other</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Quantity</label>
+          <div class="qty-row">
+            <button class="qty-btn" id="qty-down">−</button>
+            <input type="number" id="form-qty" value="1" min="1" max="99" />
+            <button class="qty-btn" id="qty-up">+</button>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Expiration Date *</label>
+          <input type="date" id="form-expiry" />
+        </div>
+        <div class="form-group">
+          <label>Notes (optional)</label>
+          <input type="text" id="form-notes" placeholder="e.g. Opened" />
+        </div>
+      </div>
+
+      <!-- Modal Footer -->
+      <div class="modal-footer">
+        <button class="btn-secondary" id="modal-cancel">Cancel</button>
+        <button class="btn-primary" id="modal-save">Save Item</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== SETTINGS MODAL ===== -->
+  <div id="modal-settings" class="modal hidden">
+    <div class="modal-backdrop" id="modal-settings-backdrop"></div>
+    <div class="modal-sheet">
+      <div class="modal-handle"></div>
+      <h2 class="modal-title">Settings</h2>
+
+      <div class="form-group">
+        <label>Notify me when items expire within</label>
+        <select id="settings-warn-days">
+          <option value="1">1 day</option>
+          <option value="2" selected>2 days</option>
+          <option value="3">3 days</option>
+          <option value="5">5 days</option>
+          <option value="7">7 days</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label>Check for expiring items</label>
+        <select id="settings-check-time">
+          <option value="on-open" selected>When I open the app</option>
+          <option value="8">Daily at 8:00 AM</option>
+          <option value="9">Daily at 9:00 AM</option>
+          <option value="10">Daily at 10:00 AM</option>
+        </select>
+      </div>
+
+      <div class="settings-section">
+        <h3>Data</h3>
+        <button class="btn-outline" id="btn-export">📤 Export Data (JSON)</button>
+        <button class="btn-outline btn-danger" id="btn-clear-expired">🗑️ Remove Expired Items</button>
+      </div>
+
+      <div class="modal-footer">
+        <button class="btn-secondary" id="settings-cancel">Close</button>
+        <button class="btn-primary" id="settings-save">Save Settings</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== ITEM DETAIL MODAL ===== -->
+  <div id="modal-detail" class="modal hidden">
+    <div class="modal-backdrop" id="modal-detail-backdrop"></div>
+    <div class="modal-sheet">
+      <div class="modal-handle"></div>
+      <div id="detail-content"></div>
+      <div class="modal-footer">
+        <button class="btn-outline btn-danger" id="detail-delete">🗑️ Remove</button>
+        <button class="btn-primary" id="detail-edit">✏️ Edit</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast notification -->
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="sw-register.js"></script>
+  <script src="storage.js"></script>
+  <script src="api.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
