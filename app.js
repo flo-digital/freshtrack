@@ -226,16 +226,87 @@ function switchModalTab(tab) {
 
 /* ---------- Barcode Scanner ---------- */
 
-function startScanner() {
-  if (scannerInstance) return;
+// Tracks which scanner engine is active
+let nativeScannerStream = null; // MediaStream for native BarcodeDetector path
+let nativeScannerActive = false;
 
+function startScanner() {
+  if (scannerInstance || nativeScannerActive) return;
+
+  if ('BarcodeDetector' in window) {
+    startNativeScanner();
+  } else {
+    startHtml5Scanner();
+  }
+}
+
+/* --- Native BarcodeDetector (iOS Safari 17+, Chrome) --- */
+async function startNativeScanner() {
+  const container = document.getElementById('scanner-container');
+  container.innerHTML = `
+    <video id="scanner-video" autoplay playsinline muted
+      style="width:100%;height:100%;object-fit:cover;display:block;border-radius:var(--radius)"></video>
+    <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;border-radius:var(--radius)">
+      <div id="scan-overlay-box" style="
+        border:2.5px solid rgba(255,255,255,0.9);
+        width:88%;height:32%;border-radius:10px;
+        box-shadow:0 0 0 9999px rgba(0,0,0,0.38)"></div>
+    </div>`;
+  container.style.position = 'relative';
+
+  const video = document.getElementById('scanner-video');
+
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } }
+    });
+  } catch (err) {
+    console.warn('Camera error:', err);
+    container.innerHTML = '';
+    if (!document.getElementById('modal-add').classList.contains('hidden')) {
+      switchModalTab('manual');
+      showToast('Camera not available — enter details manually', 'error');
+    }
+    return;
+  }
+
+  video.srcObject = stream;
+  nativeScannerStream = stream;
+  nativeScannerActive = true;
+
+  const formats = ['ean_13','ean_8','upc_a','upc_e','code_128','qr_code','data_matrix'];
+  let detector;
+  try {
+    detector = new BarcodeDetector({ formats });
+  } catch(_) {
+    detector = new BarcodeDetector(); // fallback: all formats
+  }
+
+  async function scanFrame() {
+    if (!nativeScannerActive) return;
+    if (video.readyState >= video.HAVE_ENOUGH_DATA) {
+      try {
+        const results = await detector.detect(video);
+        if (results.length > 0) {
+          onBarcodeScanned(results[0].rawValue);
+          return; // stop looping — onBarcodeScanned calls stopScanner
+        }
+      } catch (_) {}
+    }
+    requestAnimationFrame(scanFrame);
+  }
+
+  video.addEventListener('loadeddata', () => requestAnimationFrame(scanFrame), { once: true });
+}
+
+/* --- html5-qrcode fallback (older browsers) --- */
+function startHtml5Scanner() {
   const container = document.getElementById('scanner-container');
   container.innerHTML = '';
 
   scannerInstance = new Html5Qrcode('scanner-container', { verbose: false });
 
-  // Responsive qrbox: wide rectangle that fills most of the viewport width,
-  // ideal for EAN-13 / UPC barcodes which are wider than they are tall.
   const config = {
     fps: 15,
     qrbox: (w, h) => ({
@@ -248,7 +319,7 @@ function startScanner() {
     { facingMode: 'environment' },
     config,
     onBarcodeScanned,
-    () => {} // per-frame errors — ignore
+    () => {}
   ).catch(err => {
     console.warn('Scanner start error:', err);
     if (document.getElementById('modal-add').classList.contains('hidden')) return;
@@ -260,9 +331,17 @@ function startScanner() {
 }
 
 function stopScanner() {
+  // Stop native scanner
+  nativeScannerActive = false;
+  if (nativeScannerStream) {
+    nativeScannerStream.getTracks().forEach(t => t.stop());
+    nativeScannerStream = null;
+  }
+
+  // Stop html5-qrcode scanner
   if (!scannerInstance) return;
   const inst = scannerInstance;
-  scannerInstance = null; // Null first to prevent re-entrant calls
+  scannerInstance = null;
   try {
     inst.stop().catch(() => {}).finally(() => {
       const container = document.getElementById('scanner-container');
