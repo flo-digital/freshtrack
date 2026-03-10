@@ -2,6 +2,80 @@
    APP – FreshTrack Main Application Logic
    ============================================ */
 
+/* ---------- On-screen debug panel ----------
+   Intercepts console.log/warn/error and shows
+   [FreshTrack] lines in a floating panel.
+   Tap the 🐛 button (bottom-left) to toggle.
+   Remove this block once scanning is confirmed working.
+--------------------------------------------- */
+(function () {
+  const LOG_KEY = '[FreshTrack]';
+  let panel = null;
+  let visible = false;
+  const logs = [];
+
+  function stamp(type, args) {
+    const text = args.map(a => {
+      if (typeof a === 'object') { try { return JSON.stringify(a); } catch(_) { return String(a); } }
+      return String(a);
+    }).join(' ');
+    if (!text.includes(LOG_KEY)) return;
+    const time = new Date().toLocaleTimeString('en', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    logs.push({ type, time, text });
+    if (logs.length > 80) logs.shift();
+    if (panel && visible) renderLogs();
+  }
+
+  const _log   = console.log.bind(console);
+  const _warn  = console.warn.bind(console);
+  const _error = console.error.bind(console);
+  console.log   = (...a) => { _log(...a);   stamp('log',   a); };
+  console.warn  = (...a) => { _warn(...a);  stamp('warn',  a); };
+  console.error = (...a) => { _error(...a); stamp('error', a); };
+
+  function renderLogs() {
+    if (!panel) return;
+    const body = panel.querySelector('.dbg-body');
+    body.innerHTML = logs.map(l => {
+      const col = l.type === 'error' ? '#ff6b6b' : l.type === 'warn' ? '#ffd93d' : '#6bffb8';
+      const msg = l.text.replace(LOG_KEY, '').trim();
+      return `<div style="border-bottom:1px solid #222;padding:3px 0;color:${col}"><span style="color:#666;font-size:10px">${l.time} </span>${msg}</div>`;
+    }).reverse().join('');
+  }
+
+  function createPanel() {
+    panel = document.createElement('div');
+    panel.innerHTML = `
+      <div class="dbg-body" style="height:260px;overflow-y:auto;font-size:11px;font-family:monospace;padding:6px;line-height:1.4;word-break:break-all;background:#111;border-radius:12px 12px 0 0;border:1px solid #333;border-bottom:none;"></div>
+      <div style="display:flex;gap:6px;padding:6px;background:#1a1a1a;border-radius:0 0 12px 12px;border:1px solid #333;border-top:none;">
+        <button onclick="this.closest('div').parentElement.querySelector('.dbg-body').innerHTML=''" style="flex:1;background:#333;color:#fff;border:none;border-radius:8px;padding:6px;font-size:12px">Clear</button>
+        <button id="dbg-close" style="flex:1;background:#333;color:#fff;border:none;border-radius:8px;padding:6px;font-size:12px">Close</button>
+      </div>`;
+    panel.style.cssText = 'position:fixed;bottom:80px;left:8px;right:8px;z-index:99999;filter:drop-shadow(0 4px 20px #000)';
+    document.body.appendChild(panel);
+    panel.querySelector('#dbg-close').addEventListener('click', () => {
+      panel.style.display = 'none';
+      visible = false;
+    });
+    renderLogs();
+  }
+
+  function createToggle() {
+    const btn = document.createElement('button');
+    btn.textContent = '🐛';
+    btn.style.cssText = 'position:fixed;bottom:90px;left:16px;z-index:99998;width:40px;height:40px;border-radius:50%;background:rgba(0,0,0,0.7);border:1px solid #444;font-size:18px;cursor:pointer;display:flex;align-items:center;justify-content:center;';
+    btn.addEventListener('click', () => {
+      visible = !visible;
+      if (!panel) createPanel();
+      panel.style.display = visible ? 'block' : 'none';
+      if (visible) renderLogs();
+    });
+    document.body.appendChild(btn);
+  }
+
+  document.addEventListener('DOMContentLoaded', createToggle);
+})();
+
 /* ---------- Helpers ---------- */
 
 const CATEGORY_EMOJI = {
