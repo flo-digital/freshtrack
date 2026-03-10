@@ -418,6 +418,14 @@ body {
   background: #000;
   width: 100%;
   min-height: 260px;
+  border: 2.5px solid transparent;
+  animation: scanner-pulse 2s ease-in-out infinite;
+  transition: box-shadow 0.2s ease;
+}
+
+@keyframes scanner-pulse {
+  0%, 100% { border-color: rgba(26,140,90,0.3); }
+  50%       { border-color: rgba(26,140,90,0.85); }
 }
 
 #scanner-container > div { border-radius: var(--radius) !important; }

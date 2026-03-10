@@ -234,11 +234,14 @@ function startScanner() {
 
   scannerInstance = new Html5Qrcode('scanner-container', { verbose: false });
 
-  // Keep config simple for widest mobile compatibility —
-  // no formatsToSupport (scans all), no aspectRatio override.
+  // Responsive qrbox: wide rectangle that fills most of the viewport width,
+  // ideal for EAN-13 / UPC barcodes which are wider than they are tall.
   const config = {
-    fps: 10,
-    qrbox: { width: 250, height: 150 },
+    fps: 15,
+    qrbox: (w, h) => ({
+      width:  Math.min(Math.round(w * 0.90), 340),
+      height: Math.min(Math.round(h * 0.35), 130),
+    }),
   };
 
   scannerInstance.start(
@@ -274,6 +277,12 @@ function stopScanner() {
 async function onBarcodeScanned(barcode) {
   if (scannedBarcode === barcode) return; // debounce
   scannedBarcode = barcode;
+
+  // Flash the container green so the user knows it worked
+  const container = document.getElementById('scanner-container');
+  container.style.boxShadow = '0 0 0 4px #1a8c5a';
+  setTimeout(() => { container.style.boxShadow = ''; }, 600);
+
   stopScanner();
 
   // Show result area with loading state
