@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#1a8c5a" />
   <title>FreshTrack – Fridge Expiry Tracker</title>
   <link rel="manifest" href="manifest.json" />
-  <link rel="stylesheet" href="styles.css?v=4" />
+  <link rel="stylesheet" href="styles.css?v=5" />
   <!-- html5-qrcode for barcode scanning -->
   <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 </head>
@@ -198,12 +198,24 @@
     </div>
   </div>
 
+  <!--
+    Permanent file input for iOS photo capture.
+    Must live in the DOM from page load so iOS fires the 'change' event reliably.
+  -->
+  <input
+    type="file"
+    id="photo-input"
+    accept="image/*"
+    capture="environment"
+    style="position:fixed;top:-300px;left:0;width:1px;height:1px;opacity:0;pointer-events:none"
+  />
+
   <!-- Toast notification -->
   <div id="toast" class="toast hidden"></div>
 
   <script src="sw-register.js"></script>
   <script src="storage.js"></script>
   <script src="api.js"></script>
-  <script src="app.js"></script>
+  <script src="app.js?v=2"></script>
 </body>
 </html>

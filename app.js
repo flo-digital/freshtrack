@@ -337,44 +337,77 @@ async function startNativeScanner() {
 }
 
 /* ---------- Photo capture fallback (native iOS camera) ---------- */
+// The actual <input id="photo-input"> lives permanently in index.html —
+// placing it in the DOM from page load is the only approach that reliably
+// fires the 'change' event on iOS Safari after "Use Photo" is tapped.
 function capturePhoto() {
-  const input = document.createElement('input');
-  input.type    = 'file';
-  input.accept  = 'image/*';
-  input.capture = 'environment';
-  // iOS REQUIRES the input to be in the DOM before click() —
-  // otherwise the 'change' event never fires after "Use Photo".
-  input.style.cssText = 'position:fixed;top:-200px;left:0;opacity:0;pointer-events:none;width:1px;height:1px';
-  document.body.appendChild(input);
+  document.getElementById('photo-input').click();
+}
 
-  input.addEventListener('change', async () => {
-    const file = input.files?.[0];
-    document.body.removeChild(input); // clean up once we have the file
-    if (!file) return;
+/* Called by the permanent #photo-input change handler (wired in DOMContentLoaded) */
+async function handlePhotoFile(file) {
+  if (!file) return;
+  showToast('Reading barcode…');
 
-    showToast('Reading barcode…');
-
-    // html5-qrcode needs a real-sized div — a 1×1px hidden div causes it to fail.
-    const tmpId = 'photo-scan-tmp';
-    let tmpDiv  = document.getElementById(tmpId);
-    if (!tmpDiv) {
-      tmpDiv = document.createElement('div');
-      tmpDiv.id = tmpId;
-      tmpDiv.style.cssText = 'position:fixed;top:-600px;left:0;width:300px;height:300px;opacity:0;pointer-events:none;overflow:hidden';
-      document.body.appendChild(tmpDiv);
-    }
-
+  // --- Strategy 1: BarcodeDetector on a canvas (works well on iOS 17+) ---
+  if ('BarcodeDetector' in window) {
     try {
-      const scanner = new Html5Qrcode(tmpId);
-      const barcode = await scanner.scanFile(file, /* showImage= */ false);
+      const barcode = await scanFileWithBarcodeDetector(file);
       onBarcodeScanned(barcode);
-    } catch (err) {
-      console.warn('Photo scan failed:', err);
-      showToast('No barcode found — try a clearer, well-lit photo', 'error');
+      return;
+    } catch (e) {
+      console.warn('BarcodeDetector photo scan failed:', e?.message);
     }
-  });
+  }
 
-  input.click();
+  // --- Strategy 2: Html5Qrcode.scanFile fallback ---
+  const tmpId = 'photo-scan-tmp';
+  let tmpDiv  = document.getElementById(tmpId);
+  if (!tmpDiv) {
+    tmpDiv = document.createElement('div');
+    tmpDiv.id = tmpId;
+    // Must be a real-sized off-screen div — Html5Qrcode fails on tiny elements
+    tmpDiv.style.cssText = 'position:fixed;top:-600px;left:0;width:300px;height:300px;opacity:0;pointer-events:none;overflow:hidden';
+    document.body.appendChild(tmpDiv);
+  }
+  try {
+    const scanner = new Html5Qrcode(tmpId);
+    const barcode = await scanner.scanFile(file, /* showImage= */ false);
+    onBarcodeScanned(barcode);
+  } catch (err) {
+    console.warn('Html5Qrcode photo scan failed:', err);
+    showToast('No barcode found — try a clearer, well-lit photo', 'error');
+  }
+}
+
+/* Draw image file to canvas → BarcodeDetector.detect() */
+function scanFileWithBarcodeDetector(file) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+
+    img.onload = async () => {
+      URL.revokeObjectURL(url);
+      const canvas = document.createElement('canvas');
+      canvas.width  = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+      canvas.getContext('2d').drawImage(img, 0, 0);
+
+      const formats = ['ean_13','ean_8','upc_a','upc_e','code_128','qr_code','data_matrix'];
+      let detector;
+      try { detector = new BarcodeDetector({ formats }); }
+      catch(_) { detector = new BarcodeDetector(); }
+
+      try {
+        const results = await detector.detect(canvas);
+        if (results.length > 0) resolve(results[0].rawValue);
+        else reject(new Error('No barcode found'));
+      } catch(e) { reject(e); }
+    };
+
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Image load failed')); };
+    img.src = url;
+  });
 }
 
 /* Animated focus ring shown at tap location */
@@ -771,6 +804,13 @@ document.addEventListener('DOMContentLoaded', () => {
       closeDetail();
       closeSettings();
     }
+  });
+
+  /* Permanent photo-input change handler (iOS-safe approach) */
+  document.getElementById('photo-input').addEventListener('change', (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = ''; // reset so the same photo can be selected again
+    handlePhotoFile(file);
   });
 
   /* Initial render */
