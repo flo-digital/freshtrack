@@ -341,23 +341,26 @@ function capturePhoto() {
   const input = document.createElement('input');
   input.type    = 'file';
   input.accept  = 'image/*';
-  input.capture = 'environment'; // opens rear camera directly on iOS
+  input.capture = 'environment';
+  // iOS REQUIRES the input to be in the DOM before click() —
+  // otherwise the 'change' event never fires after "Use Photo".
+  input.style.cssText = 'position:fixed;top:-200px;left:0;opacity:0;pointer-events:none;width:1px;height:1px';
+  document.body.appendChild(input);
 
-  input.onchange = async (e) => {
-    const file = e.target.files?.[0];
+  input.addEventListener('change', async () => {
+    const file = input.files?.[0];
+    document.body.removeChild(input); // clean up once we have the file
     if (!file) return;
 
     showToast('Reading barcode…');
 
-    // Html5Qrcode.scanFile() is designed exactly for this:
-    // it loads the image, draws it to canvas, and runs ZXing detection.
-    // We need a tiny hidden div to instantiate the scanner.
-    const tmpId  = 'photo-scan-tmp';
-    let   tmpDiv = document.getElementById(tmpId);
+    // html5-qrcode needs a real-sized div — a 1×1px hidden div causes it to fail.
+    const tmpId = 'photo-scan-tmp';
+    let tmpDiv  = document.getElementById(tmpId);
     if (!tmpDiv) {
       tmpDiv = document.createElement('div');
       tmpDiv.id = tmpId;
-      tmpDiv.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:1px;height:1px;overflow:hidden';
+      tmpDiv.style.cssText = 'position:fixed;top:-600px;left:0;width:300px;height:300px;opacity:0;pointer-events:none;overflow:hidden';
       document.body.appendChild(tmpDiv);
     }
 
@@ -367,9 +370,9 @@ function capturePhoto() {
       onBarcodeScanned(barcode);
     } catch (err) {
       console.warn('Photo scan failed:', err);
-      showToast('No barcode found — try a closer photo or use Manual Entry', 'error');
+      showToast('No barcode found — try a clearer, well-lit photo', 'error');
     }
-  };
+  });
 
   input.click();
 }
