@@ -226,8 +226,6 @@ function showManualView() {
 /* ---------- Photo Barcode Scanning ---------- */
 
 // capturePhoto() just clicks the permanent #photo-input that lives in the HTML.
-// A permanent DOM input is required for iOS Safari — dynamically created inputs
-// don't reliably fire the 'change' event after the user taps "Use Photo".
 function capturePhoto() {
   document.getElementById('photo-input').click();
 }
@@ -236,7 +234,6 @@ function capturePhoto() {
 async function handlePhotoFile(file) {
   if (!file) return;
 
-  // Show scanning state on the Snap card
   const snapBtn = document.getElementById('btn-snap');
   snapBtn.classList.add('scanning');
   snapBtn.innerHTML = `
@@ -249,104 +246,133 @@ async function handlePhotoFile(file) {
   try {
     const barcode = await scanPhotoRobust(file);
     await onBarcodeScanned(barcode);
-    // Don't reset button — onBarcodeScanned switches to manual view
   } catch (e) {
-    console.warn('All scan strategies failed:', e?.message);
-    // Reset the snap button back to its original state
+    console.warn('[FreshTrack] All scan strategies failed:', e?.message);
     snapBtn.classList.remove('scanning');
     snapBtn.innerHTML = `
       <span class="choice-card-icon">📷</span>
       <span class="choice-card-label">Snap Barcode</span>
       <span class="choice-card-sub">Auto-identify product from barcode</span>`;
-    showToast('No barcode found — ensure good lighting and try again', 'error');
+    showToast('No barcode found — ensure barcode is flat, well-lit and fills the frame', 'error');
   }
 }
 
-/* ─────────────────────────────────────────────────────────────────────
-   scanPhotoRobust – tries three increasingly capable strategies,
-   each at all four rotations (0°, 90°, 180°, 270°) to handle:
+/* ═══════════════════════════════════════════════════════════════════════
+   scanPhotoRobust
+   Tries four strategies, each at four rotations (0°/90°/180°/270°):
 
-   • EXIF orientation (iPhone always records in landscape, rotates via metadata)
-   • Phone held in any orientation while taking the photo
-   • Barcodes printed on the top/side/bottom of packaging
+   The #1 reason scanning fails from iPhone photos is EXIF orientation.
+   iOS cameras save pixels in landscape but store a "rotate 90°" tag.
+   Drawing a plain <img> to canvas IGNORES this tag → barcode appears
+   sideways → all decoders fail.  createImageBitmap with
+   { imageOrientation:'from-image' } corrects this in the pixel buffer.
 
-   Strategy order:
-     1. Native BarcodeDetector  – fast, no extra library needed
-     2. ZXing (BrowserMultiFormatReader + TRY_HARDER)  – most powerful
-     3. Html5Qrcode.scanFile  – last resort
-   ───────────────────────────────────────────────────────────────────── */
+   Strategy order (most to least reliable for EAN-13 food barcodes):
+     1. QuaggaJS decodeSingle — locate:true finds barcode anywhere in image
+     2. Native BarcodeDetector — fast, uses all formats browser supports
+     3. ZXing BrowserMultiFormatReader TRY_HARDER
+     4. Html5Qrcode.scanFile
+   ════════════════════════════════════════════════════════════════════ */
 async function scanPhotoRobust(file) {
 
-  // Step 1: Load image with EXIF rotation applied via createImageBitmap.
-  // On iOS Safari 15.4+ and Chrome 85+, { imageOrientation: 'from-image' }
-  // reads the EXIF data and rotates the pixel buffer accordingly.
-  // Without this, a photo taken in portrait mode appears sideways on canvas
-  // and no decoder can read the barcode.
+  console.log('[FreshTrack] scanPhotoRobust start, file size:', file.size, 'type:', file.type);
+
+  // ── Load with EXIF orientation correction ────────────────────────────
   let bitmap;
   try {
     bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
+    console.log('[FreshTrack] bitmap (EXIF corrected):', bitmap.width, '×', bitmap.height);
   } catch(_) {
-    bitmap = await createImageBitmap(file); // fallback without EXIF hint
+    bitmap = await createImageBitmap(file);
+    console.log('[FreshTrack] bitmap (no EXIF):', bitmap.width, '×', bitmap.height);
   }
 
-  // Step 2: Downscale large images — 12 MP iPhone photos are 4032×3024.
-  // Most decoders work better (and faster) on images ≤ 1920px.
+  // ── Downscale very large images (1920 max) ───────────────────────────
   const MAX_DIM = 1920;
   let { width: w, height: h } = bitmap;
   if (w > MAX_DIM || h > MAX_DIM) {
     const s = MAX_DIM / Math.max(w, h);
     w = Math.round(w * s);
     h = Math.round(h * s);
+    console.log('[FreshTrack] downscaled to:', w, '×', h);
   }
 
   const ROTATIONS = [0, 90, 180, 270];
 
-  // ── Strategy 1: Native BarcodeDetector ──────────────────────────────
+  // ── Strategy 1: QuaggaJS decodeSingle (locate:true) ──────────────────
+  // QuaggaJS searches the ENTIRE image for a 1D barcode.
+  // locate:true is crucial — it finds the barcode even if it's in a corner.
+  if (typeof Quagga !== 'undefined') {
+    console.log('[FreshTrack] Trying QuaggaJS...');
+    for (const angle of ROTATIONS) {
+      try {
+        const canvas  = makeRotatedCanvas(bitmap, angle, w, h);
+        const dataURL = canvas.toDataURL('image/jpeg', 0.92);
+        const code    = await quaggaDecode(dataURL);
+        console.log(`[FreshTrack] QuaggaJS found at ${angle}°:`, code);
+        return code;
+      } catch(_) {}
+    }
+    console.log('[FreshTrack] QuaggaJS found nothing');
+  } else {
+    console.warn('[FreshTrack] Quagga not loaded');
+  }
+
+  // ── Strategy 2: Native BarcodeDetector ───────────────────────────────
   if ('BarcodeDetector' in window) {
+    console.log('[FreshTrack] Trying BarcodeDetector...');
     let detector;
     try {
-      // Use every format the browser supports (don't hand-pick and miss one)
       const supported = await BarcodeDetector.getSupportedFormats();
-      detector = new BarcodeDetector({ formats: supported });
+      console.log('[FreshTrack] supported formats:', supported);
+      detector = supported.length > 0
+        ? new BarcodeDetector({ formats: supported })
+        : new BarcodeDetector();
     } catch(_) {
       try { detector = new BarcodeDetector(); } catch(_) {}
     }
     if (detector) {
       for (const angle of ROTATIONS) {
         try {
-          const canvas = makeRotatedCanvas(bitmap, angle, w, h);
+          const canvas  = makeRotatedCanvas(bitmap, angle, w, h);
           const results = await detector.detect(canvas);
           if (results.length > 0) {
-            console.log(`BarcodeDetector found at ${angle}°:`, results[0].rawValue);
+            console.log(`[FreshTrack] BarcodeDetector found at ${angle}°:`, results[0].rawValue);
             return results[0].rawValue;
           }
         } catch(_) {}
       }
     }
+    console.log('[FreshTrack] BarcodeDetector found nothing');
+  } else {
+    console.warn('[FreshTrack] BarcodeDetector not available');
   }
 
-  // ── Strategy 2: ZXing BrowserMultiFormatReader (TRY_HARDER) ─────────
-  // ZXing is much more aggressive in locating barcodes within an image.
-  // TRY_HARDER enables exhaustive scanning (slower but far more reliable).
+  // ── Strategy 3: ZXing BrowserMultiFormatReader (TRY_HARDER) ──────────
   const zx = window.ZXing;
   if (zx?.BrowserMultiFormatReader && zx?.DecodeHintType) {
-    const hints = new Map([[zx.DecodeHintType.TRY_HARDER, true]]);
+    console.log('[FreshTrack] Trying ZXing...');
+    const hints  = new Map([[zx.DecodeHintType.TRY_HARDER, true]]);
     const reader = new zx.BrowserMultiFormatReader(hints);
     for (const angle of ROTATIONS) {
       try {
         const canvas = makeRotatedCanvas(bitmap, angle, w, h);
         const result = reader.decodeFromCanvas(canvas);
         if (result) {
-          console.log(`ZXing found at ${angle}°:`, result.getText());
+          console.log(`[FreshTrack] ZXing found at ${angle}°:`, result.getText());
           return result.getText();
         }
-      } catch(_) {} // ZXing throws NotFoundException — that's expected
+      } catch(_) {}
     }
+    console.log('[FreshTrack] ZXing found nothing');
+  } else {
+    console.warn('[FreshTrack] ZXing not loaded or missing BrowserMultiFormatReader');
   }
 
-  // ── Strategy 3: Html5Qrcode.scanFile ────────────────────────────────
+  // ── Strategy 4: Html5Qrcode.scanFile ─────────────────────────────────
+  console.log('[FreshTrack] Trying Html5Qrcode...');
   const tmpId = 'photo-scan-tmp';
-  let tmpDiv = document.getElementById(tmpId);
+  let tmpDiv  = document.getElementById(tmpId);
   if (!tmpDiv) {
     tmpDiv = document.createElement('div');
     tmpDiv.id = tmpId;
@@ -356,18 +382,45 @@ async function scanPhotoRobust(file) {
   try {
     const scanner = new Html5Qrcode(tmpId);
     const barcode = await scanner.scanFile(file, false);
-    console.log('Html5Qrcode found:', barcode);
+    console.log('[FreshTrack] Html5Qrcode found:', barcode);
     return barcode;
-  } catch(_) {}
+  } catch(e) {
+    console.warn('[FreshTrack] Html5Qrcode failed:', e?.message);
+  }
 
-  throw new Error('No barcode detected after all strategies');
+  throw new Error('No barcode detected after all 4 strategies');
+}
+
+/* QuaggaJS single-image decode (promisified) */
+function quaggaDecode(src) {
+  return new Promise((resolve, reject) => {
+    Quagga.decodeSingle({
+      src,
+      numOfWorkers: 0,   // run in main thread — required for some iOS contexts
+      locate: true,      // search entire image, not just center
+      inputStream: { size: 1280 },
+      decoder: {
+        readers: [
+          'ean_reader', 'ean_8_reader',
+          'upc_reader', 'upc_e_reader',
+          'code_128_reader', 'code_39_reader',
+        ],
+        multiple: false,
+      },
+    }, (result) => {
+      if (result?.codeResult?.code) {
+        resolve(result.codeResult.code);
+      } else {
+        reject(new Error('QuaggaJS: no barcode found'));
+      }
+    });
+  });
 }
 
 /* Build a canvas from a bitmap at the given rotation angle */
 function makeRotatedCanvas(source, angleDeg, w, h) {
   const canvas = document.createElement('canvas');
   const ctx    = canvas.getContext('2d');
-  // For 90° / 270°, width and height swap
   const cw = (angleDeg === 90 || angleDeg === 270) ? h : w;
   const ch = (angleDeg === 90 || angleDeg === 270) ? w : h;
   canvas.width  = cw;
