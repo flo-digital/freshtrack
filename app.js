@@ -250,7 +250,12 @@ async function startNativeScanner() {
       <div id="scan-overlay-box" style="
         border:2.5px solid rgba(255,255,255,0.9);
         width:88%;height:32%;border-radius:10px;
-        box-shadow:0 0 0 9999px rgba(0,0,0,0.38)"></div>
+        box-shadow:0 0 0 9999px rgba(0,0,0,0.45)"></div>
+    </div>
+    <div id="tap-hint" style="
+      position:absolute;bottom:10px;width:100%;text-align:center;
+      color:rgba(255,255,255,0.55);font-size:12px;pointer-events:none">
+      Tap to focus
     </div>`;
   container.style.position = 'relative';
 
@@ -275,12 +280,41 @@ async function startNativeScanner() {
   nativeScannerStream = stream;
   nativeScannerActive = true;
 
+  // ---- Tap-to-focus ----
+  container.addEventListener('click', async (e) => {
+    const track = nativeScannerStream?.getVideoTracks()[0];
+    if (!track) return;
+
+    // Show animated focus ring at tap point
+    const rect = container.getBoundingClientRect();
+    showFocusRing(e.clientX - rect.left, e.clientY - rect.top, container);
+
+    try {
+      const cap = track.getCapabilities?.() || {};
+      const modes = cap.focusMode || [];
+      if (modes.includes('single-shot') || modes.includes('manual')) {
+        // Chrome: pointOfInterest lets you focus at exact tap location
+        const nx = (e.clientX - rect.left) / rect.width;
+        const ny = (e.clientY - rect.top) / rect.height;
+        await track.applyConstraints({
+          advanced: [{ focusMode: 'single-shot', pointOfInterest: { x: nx, y: ny } }]
+        });
+      } else if (modes.includes('continuous')) {
+        // iOS: toggle to single-shot to force a refocus, then back
+        await track.applyConstraints({ advanced: [{ focusMode: 'single-shot' }] });
+        setTimeout(() => {
+          track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }).catch(() => {});
+        }, 800);
+      }
+    } catch (_) { /* Focus API not supported — ring still shows */ }
+  });
+
   const formats = ['ean_13','ean_8','upc_a','upc_e','code_128','qr_code','data_matrix'];
   let detector;
   try {
     detector = new BarcodeDetector({ formats });
   } catch(_) {
-    detector = new BarcodeDetector(); // fallback: all formats
+    detector = new BarcodeDetector();
   }
 
   async function scanFrame() {
@@ -290,7 +324,7 @@ async function startNativeScanner() {
         const results = await detector.detect(video);
         if (results.length > 0) {
           onBarcodeScanned(results[0].rawValue);
-          return; // stop looping — onBarcodeScanned calls stopScanner
+          return;
         }
       } catch (_) {}
     }
@@ -298,6 +332,21 @@ async function startNativeScanner() {
   }
 
   video.addEventListener('loadeddata', () => requestAnimationFrame(scanFrame), { once: true });
+}
+
+/* Animated focus ring shown at tap location */
+function showFocusRing(x, y, parent) {
+  const ring = document.createElement('div');
+  ring.style.cssText = `
+    position:absolute; pointer-events:none; z-index:20;
+    left:${x}px; top:${y}px;
+    width:56px; height:56px; margin:-28px 0 0 -28px;
+    border:2px solid rgba(255,255,255,0.95);
+    border-radius:50%;
+    animation: focus-ring 0.65s ease forwards;
+  `;
+  parent.appendChild(ring);
+  setTimeout(() => ring.remove(), 700);
 }
 
 /* --- html5-qrcode fallback (older browsers) --- */
