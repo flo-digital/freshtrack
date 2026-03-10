@@ -598,6 +598,94 @@ body {
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 3px; }
 
+/* ========= CHOICE VIEW (Add Item landing) ========= */
+.choice-prompt {
+  text-align: center;
+  font-size: 14px;
+  color: var(--text-2);
+  margin-bottom: 20px;
+}
+
+.choice-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
+.choice-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 32px 16px 28px;
+  background: var(--glass);
+  border: 1.5px solid var(--glass-border);
+  border-radius: 22px;
+  cursor: pointer;
+  transition: background var(--transition), transform 0.13s, box-shadow var(--transition), border-color var(--transition);
+  box-shadow: var(--shadow-sm), inset 0 1px 0 var(--glass-highlight);
+  color: var(--text-1);
+  text-align: center;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  position: relative;
+  overflow: hidden;
+  width: 100%;
+}
+.choice-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(135deg, rgba(255,255,255,0.06) 0%, transparent 60%);
+  pointer-events: none;
+}
+.choice-card:hover {
+  background: var(--glass-hover);
+  box-shadow: 0 0 20px rgba(0,122,255,0.15), var(--shadow-sm), inset 0 1px 0 var(--glass-highlight);
+}
+.choice-card:active {
+  transform: scale(0.95);
+  background: rgba(0,122,255,0.14);
+  border-color: rgba(0,122,255,0.50);
+  box-shadow: 0 0 28px rgba(0,122,255,0.25), inset 0 1px 0 rgba(255,255,255,0.18);
+}
+
+.choice-card-icon  { font-size: 46px; line-height: 1; display: block; }
+.choice-card-label { font-size: 16px; font-weight: 700; color: var(--text-1); display: block; margin-top: 2px; }
+.choice-card-sub   { font-size: 12px; color: var(--text-3); display: block; line-height: 1.35; margin-top: 2px; }
+
+.choice-dismiss {
+  display: block;
+  width: 100%;
+  margin-top: 16px;
+  padding: 12px;
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--text-2);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: color var(--transition), background var(--transition);
+  text-align: center;
+}
+.choice-dismiss:hover { color: var(--text-1); background: rgba(255,255,255,0.05); }
+.choice-dismiss:active { opacity: 0.7; }
+
+/* ========= PROCESSING STATE on choice screen ========= */
+.choice-card.processing {
+  opacity: 0.55;
+  pointer-events: none;
+}
+.choice-card.loading::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: rgba(0,122,255,0.08);
+  animation: scanner-pulse 1.2s ease-in-out infinite;
+}
+
 /* Responsive */
 @media (min-width: 480px) {
   .modal-sheet { max-width: 480px; margin: 0 auto; border-radius: 24px; border: 1px solid var(--glass-border); }

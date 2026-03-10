@@ -6,8 +6,8 @@
   <meta name="theme-color" content="#1a8c5a" />
   <title>FreshTrack – Fridge Expiry Tracker</title>
   <link rel="manifest" href="manifest.json" />
-  <link rel="stylesheet" href="styles.css?v=5" />
-  <!-- html5-qrcode for barcode scanning -->
+  <link rel="stylesheet" href="styles.css?v=6" />
+  <!-- html5-qrcode for barcode photo scanning fallback -->
   <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 </head>
 <body>
@@ -72,31 +72,27 @@
     <div class="modal-backdrop" id="modal-add-backdrop"></div>
     <div class="modal-sheet">
       <div class="modal-handle"></div>
-      <h2 class="modal-title">Add Item</h2>
+      <h2 class="modal-title" id="modal-add-title">Add Item</h2>
 
-      <!-- Scan / Manual tabs -->
-      <div class="modal-tabs">
-        <button class="modal-tab active" id="tab-scan">📷 Scan Barcode</button>
-        <button class="modal-tab" id="tab-manual">✏️ Manual Entry</button>
-      </div>
-
-      <!-- Scanner View -->
-      <div id="scan-view">
-        <div id="scanner-container"></div>
-        <p class="scan-hint">Hold barcode inside the frame — or tap below</p>
-        <button class="btn-photo" id="btn-photo" onclick="capturePhoto()">📷 Take Photo of Barcode</button>
-        <div id="scan-result" class="scan-result hidden">
-          <div class="scan-found">
-            <img id="scan-product-img" src="" alt="" class="product-img hidden" />
-            <div class="scan-info">
-              <p class="scan-product-name" id="scan-product-name">Loading…</p>
-              <p class="scan-barcode-val" id="scan-barcode-val"></p>
-            </div>
-          </div>
+      <!-- ── Choice View (shown by default for new items) ── -->
+      <div id="choice-view">
+        <p class="choice-prompt">How would you like to add this item?</p>
+        <div class="choice-grid">
+          <button class="choice-card" id="btn-snap">
+            <span class="choice-card-icon">📷</span>
+            <span class="choice-card-label">Snap Barcode</span>
+            <span class="choice-card-sub">Auto-identify product from barcode</span>
+          </button>
+          <button class="choice-card" id="btn-manual-entry">
+            <span class="choice-card-icon">✏️</span>
+            <span class="choice-card-label">Manual Entry</span>
+            <span class="choice-card-sub">Type in the details yourself</span>
+          </button>
         </div>
+        <button class="choice-dismiss" id="choice-cancel">Cancel</button>
       </div>
 
-      <!-- Manual / Edit Form -->
+      <!-- ── Manual / Edit Form ── -->
       <div id="manual-view" class="hidden">
         <div class="form-group">
           <label>Product Name *</label>
@@ -110,7 +106,7 @@
           <label>Category</label>
           <select id="form-category">
             <option value="dairy">🥛 Dairy</option>
-            <option value="meat">🥩 Meat & Fish</option>
+            <option value="meat">🥩 Meat &amp; Fish</option>
             <option value="produce">🥦 Produce</option>
             <option value="leftovers">🍱 Leftovers</option>
             <option value="drinks">🥤 Drinks</option>
@@ -136,8 +132,8 @@
         </div>
       </div>
 
-      <!-- Modal Footer -->
-      <div class="modal-footer">
+      <!-- ── Modal Footer (only shown with manual-view) ── -->
+      <div class="modal-footer hidden" id="modal-footer-actions">
         <button class="btn-secondary" id="modal-cancel">Cancel</button>
         <button class="btn-primary" id="modal-save">Save Item</button>
       </div>
@@ -200,7 +196,8 @@
 
   <!--
     Permanent file input for iOS photo capture.
-    Must live in the DOM from page load so iOS fires the 'change' event reliably.
+    Must live in the DOM from page load — dynamically created inputs
+    don't fire the 'change' event reliably on iOS Safari after "Use Photo".
   -->
   <input
     type="file"
@@ -216,6 +213,6 @@
   <script src="sw-register.js"></script>
   <script src="storage.js"></script>
   <script src="api.js"></script>
-  <script src="app.js?v=2"></script>
+  <script src="app.js?v=3"></script>
 </body>
 </html>

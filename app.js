@@ -54,17 +54,16 @@ function showToast(msg, type = '') {
   el.textContent = msg;
   el.className = 'toast' + (type ? ' ' + type : '');
   clearTimeout(showToast._t);
-  showToast._t = setTimeout(() => { el.className = 'toast hidden'; }, 2800);
+  showToast._t = setTimeout(() => { el.className = 'toast hidden'; }, 3000);
 }
 
 /* ---------- State ---------- */
 
 let activeFilter   = 'all';
 let searchQuery    = '';
-let scannerInstance = null;
-let editingItemId   = null;
-let scannedBarcode  = null;
-let scannedProduct  = null;
+let editingItemId  = null;
+let scannedBarcode = null;
+let scannedProduct = null;
 
 /* ---------- Render ---------- */
 
@@ -184,203 +183,93 @@ function openAddModal(prefill = {}) {
   document.getElementById('form-expiry').value   = prefill.expirationDate || '';
   document.getElementById('form-notes').value    = prefill.notes    || '';
 
-  // Default to today for date if new
+  // Default expiry to +7 days for new items
   if (!prefill.expirationDate) {
     const t = new Date(); t.setDate(t.getDate() + 7);
     document.getElementById('form-expiry').value = t.toISOString().slice(0, 10);
   }
 
-  // Show scan tab by default for new items, manual tab for edits
+  document.getElementById('modal-add-title').textContent =
+    editingItemId ? 'Edit Item' : 'Add Item';
+
+  // Editing → go straight to form; new item → show choice screen
   if (editingItemId) {
-    switchModalTab('manual');
+    showManualView();
   } else {
-    switchModalTab('scan');
+    showChoiceView();
   }
 
   document.getElementById('modal-add').classList.remove('hidden');
-  document.getElementById('modal-add').querySelector('.modal-title').textContent =
-    editingItemId ? 'Edit Item' : 'Add Item';
 }
 
 function closeAddModal() {
-  stopScanner();
   document.getElementById('modal-add').classList.add('hidden');
-  document.getElementById('scan-result').classList.add('hidden');
   editingItemId  = null;
   scannedBarcode = null;
   scannedProduct = null;
 }
 
-function switchModalTab(tab) {
-  document.getElementById('tab-scan').classList.toggle('active', tab === 'scan');
-  document.getElementById('tab-manual').classList.toggle('active', tab === 'manual');
-  document.getElementById('scan-view').classList.toggle('hidden', tab !== 'scan');
-  document.getElementById('manual-view').classList.toggle('hidden', tab !== 'manual');
-
-  if (tab === 'scan') {
-    startScanner();
-  } else {
-    stopScanner();
-  }
+/* Show the two-button landing screen */
+function showChoiceView() {
+  document.getElementById('choice-view').classList.remove('hidden');
+  document.getElementById('manual-view').classList.add('hidden');
+  document.getElementById('modal-footer-actions').classList.add('hidden');
 }
 
-/* ---------- Barcode Scanner ---------- */
-
-// Tracks which scanner engine is active
-let nativeScannerStream = null; // MediaStream for native BarcodeDetector path
-let nativeScannerActive = false;
-
-function startScanner() {
-  if (scannerInstance || nativeScannerActive) return;
-
-  if ('BarcodeDetector' in window) {
-    startNativeScanner();
-  } else {
-    startHtml5Scanner();
-  }
+/* Show the manual entry form */
+function showManualView() {
+  document.getElementById('choice-view').classList.add('hidden');
+  document.getElementById('manual-view').classList.remove('hidden');
+  document.getElementById('modal-footer-actions').classList.remove('hidden');
 }
 
-/* --- Native BarcodeDetector (iOS Safari 17+, Chrome) --- */
-async function startNativeScanner() {
-  const container = document.getElementById('scanner-container');
-  container.innerHTML = `
-    <video id="scanner-video" autoplay playsinline muted
-      style="width:100%;height:100%;object-fit:cover;display:block;border-radius:var(--radius)"></video>
-    <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;border-radius:var(--radius)">
-      <div id="scan-overlay-box" style="
-        border:2.5px solid rgba(255,255,255,0.9);
-        width:88%;height:32%;border-radius:10px;
-        box-shadow:0 0 0 9999px rgba(0,0,0,0.45)"></div>
-    </div>
-    <div style="
-      position:absolute;bottom:10px;width:100%;text-align:center;
-      color:rgba(255,255,255,0.55);font-size:12px;pointer-events:none">
-      Tap to focus
-    </div>`;
-  container.style.position = 'relative';
+/* ---------- Photo Barcode Scanning ---------- */
 
-  const video = document.getElementById('scanner-video');
-
-  let stream;
-  try {
-    stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } }
-    });
-  } catch (err) {
-    console.warn('Camera error:', err);
-    container.innerHTML = '';
-    if (!document.getElementById('modal-add').classList.contains('hidden')) {
-      switchModalTab('manual');
-      showToast('Camera not available — enter details manually', 'error');
-    }
-    return;
-  }
-
-  video.srcObject = stream;
-  nativeScannerStream = stream;
-  nativeScannerActive = true;
-
-  // ---- Tap-to-focus ----
-  container.addEventListener('click', async (e) => {
-    const track = nativeScannerStream?.getVideoTracks()[0];
-    if (!track) return;
-    const rect = container.getBoundingClientRect();
-    showFocusRing(e.clientX - rect.left, e.clientY - rect.top, container);
-    try {
-      const cap = track.getCapabilities?.() || {};
-      const modes = cap.focusMode || [];
-      if (modes.includes('single-shot') || modes.includes('manual')) {
-        const nx = (e.clientX - rect.left) / rect.width;
-        const ny = (e.clientY - rect.top) / rect.height;
-        await track.applyConstraints({
-          advanced: [{ focusMode: 'single-shot', pointOfInterest: { x: nx, y: ny } }]
-        });
-      } else if (modes.includes('continuous')) {
-        await track.applyConstraints({ advanced: [{ focusMode: 'single-shot' }] });
-        setTimeout(() => {
-          track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }).catch(() => {});
-        }, 800);
-      }
-    } catch (_) {}
-  });
-
-  // ---- Detection loop via canvas (more compatible than detect(video) on Safari) ----
-  const formats = ['ean_13','ean_8','upc_a','upc_e','code_128','qr_code','data_matrix'];
-  let detector;
-  try { detector = new BarcodeDetector({ formats }); }
-  catch(_) { detector = new BarcodeDetector(); }
-
-  // Offscreen canvas to grab individual frames
-  const offCanvas = document.createElement('canvas');
-  const offCtx = offCanvas.getContext('2d', { willReadFrequently: true });
-
-  async function scanFrame() {
-    if (!nativeScannerActive) return;
-    if (video.readyState >= video.HAVE_ENOUGH_DATA && video.videoWidth > 0) {
-      offCanvas.width  = video.videoWidth;
-      offCanvas.height = video.videoHeight;
-      offCtx.drawImage(video, 0, 0);
-      try {
-        const results = await detector.detect(offCanvas);
-        if (results.length > 0) {
-          onBarcodeScanned(results[0].rawValue);
-          return; // stop loop — onBarcodeScanned calls stopScanner
-        }
-      } catch (e) {
-        console.warn('detect error:', e?.message);
-      }
-    }
-    setTimeout(scanFrame, 200); // ~5 fps — gives detector breathing room
-  }
-
-  video.addEventListener('loadeddata', () => setTimeout(scanFrame, 300), { once: true });
-}
-
-/* ---------- Photo capture fallback (native iOS camera) ---------- */
-// The actual <input id="photo-input"> lives permanently in index.html —
-// placing it in the DOM from page load is the only approach that reliably
-// fires the 'change' event on iOS Safari after "Use Photo" is tapped.
+// capturePhoto() just clicks the permanent #photo-input that lives in the HTML.
+// A permanent DOM input is required for iOS Safari — dynamically created inputs
+// don't reliably fire the 'change' event after the user taps "Use Photo".
 function capturePhoto() {
   document.getElementById('photo-input').click();
 }
 
-/* Called by the permanent #photo-input change handler (wired in DOMContentLoaded) */
+/* Processes the photo file returned by #photo-input */
 async function handlePhotoFile(file) {
   if (!file) return;
+
   showToast('Reading barcode…');
 
-  // --- Strategy 1: BarcodeDetector on a canvas (works well on iOS 17+) ---
+  // Strategy 1: native BarcodeDetector on canvas (iOS 17+, Chrome)
   if ('BarcodeDetector' in window) {
     try {
       const barcode = await scanFileWithBarcodeDetector(file);
-      onBarcodeScanned(barcode);
+      await onBarcodeScanned(barcode);
       return;
     } catch (e) {
       console.warn('BarcodeDetector photo scan failed:', e?.message);
     }
   }
 
-  // --- Strategy 2: Html5Qrcode.scanFile fallback ---
+  // Strategy 2: Html5Qrcode.scanFile fallback (older browsers)
   const tmpId = 'photo-scan-tmp';
   let tmpDiv  = document.getElementById(tmpId);
   if (!tmpDiv) {
     tmpDiv = document.createElement('div');
     tmpDiv.id = tmpId;
-    // Must be a real-sized off-screen div — Html5Qrcode fails on tiny elements
+    // Must be a real-sized off-screen div — Html5Qrcode fails on 1×1px elements
     tmpDiv.style.cssText = 'position:fixed;top:-600px;left:0;width:300px;height:300px;opacity:0;pointer-events:none;overflow:hidden';
     document.body.appendChild(tmpDiv);
   }
   try {
     const scanner = new Html5Qrcode(tmpId);
     const barcode = await scanner.scanFile(file, /* showImage= */ false);
-    onBarcodeScanned(barcode);
+    await onBarcodeScanned(barcode);
   } catch (err) {
     console.warn('Html5Qrcode photo scan failed:', err);
-    showToast('No barcode found — try a clearer, well-lit photo', 'error');
+    showToast('No barcode found — try a clearer photo', 'error');
   }
 }
 
-/* Draw image file to canvas → BarcodeDetector.detect() */
+/* Draw image file onto a canvas, then run BarcodeDetector.detect(canvas) */
 function scanFileWithBarcodeDetector(file) {
   return new Promise((resolve, reject) => {
     const img = new Image();
@@ -410,115 +299,29 @@ function scanFileWithBarcodeDetector(file) {
   });
 }
 
-/* Animated focus ring shown at tap location */
-function showFocusRing(x, y, parent) {
-  const ring = document.createElement('div');
-  ring.style.cssText = `
-    position:absolute; pointer-events:none; z-index:20;
-    left:${x}px; top:${y}px;
-    width:56px; height:56px; margin:-28px 0 0 -28px;
-    border:2px solid rgba(255,255,255,0.95);
-    border-radius:50%;
-    animation: focus-ring 0.65s ease forwards;
-  `;
-  parent.appendChild(ring);
-  setTimeout(() => ring.remove(), 700);
-}
-
-/* --- html5-qrcode fallback (older browsers) --- */
-function startHtml5Scanner() {
-  const container = document.getElementById('scanner-container');
-  container.innerHTML = '';
-
-  scannerInstance = new Html5Qrcode('scanner-container', { verbose: false });
-
-  const config = {
-    fps: 15,
-    qrbox: (w, h) => ({
-      width:  Math.min(Math.round(w * 0.90), 340),
-      height: Math.min(Math.round(h * 0.35), 130),
-    }),
-  };
-
-  scannerInstance.start(
-    { facingMode: 'environment' },
-    config,
-    onBarcodeScanned,
-    () => {}
-  ).catch(err => {
-    console.warn('Scanner start error:', err);
-    if (document.getElementById('modal-add').classList.contains('hidden')) return;
-    stopScanner();
-    if (document.getElementById('scan-view').classList.contains('hidden')) return;
-    switchModalTab('manual');
-    showToast('Camera not available — enter details manually', 'error');
-  });
-}
-
-function stopScanner() {
-  // Stop native scanner
-  nativeScannerActive = false;
-  if (nativeScannerStream) {
-    nativeScannerStream.getTracks().forEach(t => t.stop());
-    nativeScannerStream = null;
-  }
-
-  // Stop html5-qrcode scanner
-  if (!scannerInstance) return;
-  const inst = scannerInstance;
-  scannerInstance = null;
-  try {
-    inst.stop().catch(() => {}).finally(() => {
-      const container = document.getElementById('scanner-container');
-      if (container) container.innerHTML = '';
-    });
-  } catch (_) {
-    const container = document.getElementById('scanner-container');
-    if (container) container.innerHTML = '';
-  }
-}
-
+/* Called when a barcode value has been successfully decoded */
 async function onBarcodeScanned(barcode) {
   if (scannedBarcode === barcode) return; // debounce
   scannedBarcode = barcode;
 
-  // Flash the container blue so the user knows it worked
-  const container = document.getElementById('scanner-container');
-  container.style.boxShadow = '0 0 0 4px #007AFF, 0 0 24px rgba(0,122,255,0.6)';
-  setTimeout(() => { container.style.boxShadow = ''; }, 700);
+  showToast('Barcode found — looking up product…');
 
-  stopScanner();
-
-  // Show result area with loading state
-  const resultEl = document.getElementById('scan-result');
-  resultEl.classList.remove('hidden');
-  document.getElementById('scan-product-name').textContent = 'Looking up product…';
-  document.getElementById('scan-barcode-val').textContent  = barcode;
-  document.getElementById('scan-product-img').classList.add('hidden');
-
-  // Lookup
   const product = await FoodAPI.lookupBarcode(barcode);
   scannedProduct = product;
 
-  if (product && product.name) {
-    document.getElementById('scan-product-name').textContent = product.name;
-    if (product.image) {
-      const img = document.getElementById('scan-product-img');
-      img.src = product.image;
-      img.classList.remove('hidden');
-    }
-    // Pre-fill form
-    document.getElementById('form-name').value     = product.name;
-    document.getElementById('form-barcode').value  = barcode;
-    document.getElementById('form-category').value = product.category || 'other';
-  } else {
-    document.getElementById('scan-product-name').textContent = 'Product not found — fill details manually';
-    document.getElementById('form-barcode').value = barcode;
-  }
+  // Pre-fill form fields
+  document.getElementById('form-name').value     = product?.name     || '';
+  document.getElementById('form-barcode').value  = barcode;
+  document.getElementById('form-category').value = product?.category || 'other';
 
-  // Switch to manual to fill in expiry date etc.
-  switchModalTab('manual');
-  showToast(product?.name ? `Found: ${product.name}` : 'Unknown product — fill details below');
+  // Show the form so the user can fill in the expiry date
+  showManualView();
+
+  if (product?.name) {
+    showToast(`Found: ${product.name} — set the expiry date`, 'success');
+  } else {
+    showToast('Product not in database — fill in details below');
+  }
 }
 
 /* ---------- Save Item ---------- */
@@ -567,7 +370,7 @@ function openDetail(id) {
   const badgeText  = expiryLabel(days);
 
   const imgHtml = item.image
-    ? `<img src="${item.image}" class="product-img" style="width:72px;height:72px;border-radius:18px;object-fit:contain;background:var(--gray-100)" alt="" />`
+    ? `<img src="${item.image}" class="product-img" style="width:72px;height:72px;border-radius:18px;object-fit:contain;background:var(--glass)" alt="" />`
     : `<div class="detail-emoji">${CATEGORY_EMOJI[item.category] || '📦'}</div>`;
 
   document.getElementById('detail-content').innerHTML = `
@@ -683,7 +486,6 @@ function checkAndNotify() {
     tag:  'freshtrack-expiry',
   });
 
-  // Update last check timestamp
   cfg.lastNotifCheck = new Date().toISOString();
   Storage.saveConfig(cfg);
 }
@@ -693,7 +495,6 @@ function shouldRunNotifCheck() {
   if (!cfg.lastNotifCheck) return true;
   const last = new Date(cfg.lastNotifCheck);
   const now  = new Date();
-  // Always check if more than 4 hours since last check
   return (now - last) > 4 * 60 * 60 * 1000;
 }
 
@@ -753,14 +554,17 @@ document.addEventListener('DOMContentLoaded', () => {
     renderList();
   });
 
-  /* Add Modal – tab switching */
-  document.getElementById('tab-scan').addEventListener('click', () => switchModalTab('scan'));
-  document.getElementById('tab-manual').addEventListener('click', () => switchModalTab('manual'));
+  /* Add Modal – choice buttons */
+  document.getElementById('btn-snap').addEventListener('click', capturePhoto);
+  document.getElementById('btn-manual-entry').addEventListener('click', showManualView);
+  document.getElementById('choice-cancel').addEventListener('click', closeAddModal);
 
-  /* Add Modal – save/cancel */
+  /* Add Modal – backdrop closes modal */
+  document.getElementById('modal-add-backdrop').addEventListener('click', closeAddModal);
+
+  /* Add Modal – save/cancel in form view */
   document.getElementById('modal-save').addEventListener('click', saveItem);
   document.getElementById('modal-cancel').addEventListener('click', closeAddModal);
-  document.getElementById('modal-add-backdrop').addEventListener('click', closeAddModal);
 
   /* Detail Modal – edit/delete */
   document.getElementById('detail-edit').addEventListener('click', e => {
@@ -806,10 +610,10 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  /* Permanent photo-input change handler (iOS-safe approach) */
+  /* Permanent photo-input change handler (iOS-safe — input is always in the DOM) */
   document.getElementById('photo-input').addEventListener('change', (e) => {
     const file = e.target.files?.[0];
-    e.target.value = ''; // reset so the same photo can be selected again
+    e.target.value = ''; // reset so the same photo can be re-selected
     handlePhotoFile(file);
   });
 
