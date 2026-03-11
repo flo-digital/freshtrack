@@ -278,6 +278,7 @@ function openAddModal(prefill = {}) {
 
 function closeAddModal() {
   document.getElementById('modal-add').classList.add('hidden');
+  document.getElementById('product-preview').classList.add('hidden');
   editingItemId  = null;
   scannedBarcode = null;
   scannedProduct = null;
@@ -485,6 +486,20 @@ function makeRotatedCanvas(source, angleDeg, w, h) {
   return canvas;
 }
 
+/* Smart default expiry days per category.
+   Barcodes only identify the product type — the actual expiry date is
+   printed on each individual package and cannot be read from a barcode.
+   These defaults give a sensible starting point to adjust from. */
+const CATEGORY_DEFAULT_DAYS = {
+  dairy:      7,   // fresh milk/yogurt — user should check carton top
+  meat:       3,
+  produce:    5,
+  leftovers:  3,
+  drinks:     14,
+  condiments: 90,
+  other:      7,
+};
+
 /* Called when a barcode value has been successfully decoded */
 async function onBarcodeScanned(barcode) {
   if (scannedBarcode === barcode) return; // debounce
@@ -495,18 +510,43 @@ async function onBarcodeScanned(barcode) {
   const product = await FoodAPI.lookupBarcode(barcode);
   scannedProduct = product;
 
+  const category = product?.category || 'other';
+
   // Pre-fill form fields
   document.getElementById('form-name').value     = product?.name     || '';
   document.getElementById('form-barcode').value  = barcode;
-  document.getElementById('form-category').value = product?.category || 'other';
+  document.getElementById('form-category').value = category;
 
-  // Show the form so the user can fill in the expiry date
+  // Smart expiry default based on category
+  const days = CATEGORY_DEFAULT_DAYS[category] ?? 7;
+  const t = new Date(); t.setDate(t.getDate() + days);
+  document.getElementById('form-expiry').value = t.toISOString().slice(0, 10);
+
+  // Show product image preview if available
+  const preview     = document.getElementById('product-preview');
+  const previewImg  = document.getElementById('product-preview-img');
+  const previewName = document.getElementById('product-preview-name');
+
+  if (product) {
+    previewName.textContent = [product.brand, product.name].filter(Boolean).join(' · ') || product.name || 'Unknown';
+    if (product.image) {
+      previewImg.src = product.image;
+      previewImg.classList.remove('no-image');
+    } else {
+      previewImg.classList.add('no-image');
+    }
+    preview.classList.remove('hidden');
+  } else {
+    preview.classList.add('hidden');
+  }
+
+  // Show the form
   showManualView();
 
   if (product?.name) {
-    showToast(`Found: ${product.name} — set the expiry date`, 'success');
+    showToast(`Found: ${product.name} — check the expiry date`, 'success');
   } else {
-    showToast('Product not in database — fill in details below');
+    showToast('Product not in database — fill in details manually');
   }
 }
 
