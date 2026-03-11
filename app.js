@@ -332,103 +332,87 @@ async function handlePhotoFile(file) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
-   scanPhotoRobust  — revised pipeline
+   scanPhotoRobust  — v3 pipeline
 
-   Key insight: EXIF rotation is best handled by the BROWSER via a plain
-   <img> element. Safari 14+ / Chrome 80+ automatically apply EXIF when:
-     • Displaying an <img>              → naturalWidth/Height are rotated
-     • BarcodeDetector.detect(imgEl)   → sees correctly-oriented pixels
-     • ctx.drawImage(imgEl, …)         → canvas gets rotated pixels
+   Diagnosis from on-device debug panel:
+   • BarcodeDetector: NOT available on iOS Safari (Chrome/Android only)
+   • ZXing canvas: was downscaling to 1920px → barcode detail lost → 0 hits
+     Fix: decodeFromImageUrl() lets ZXing load the blob at full resolution;
+     browser applies EXIF when ZXing creates its internal <img>.
+   • Quagga: 1600px cap caused 6→8 misread (too little detail at that scale)
+     Fix: try 2560px with halfSample:false first.
 
-   So the safest pipeline is:
-     1. QuaggaJS  — pass the original file as an object URL directly;
-                    Quagga loads it as <img> (EXIF applied), locate:true
-                    searches the whole image, multiple patchSizes tried
-     2. BarcodeDetector — detect(imgEl) first, then canvas rotations
-     3. ZXing     — canvas rotations from the img element
+   Pipeline:
+     1. ZXing  — decodeFromImageUrl(objURL) [full-res, EXIF by browser]
+     2. Quagga — 2560px (x-large / large, halfSample:false) → 1600 → 800
+     3. ZXing  — canvas rotations at near-full res (handles tilted photos)
      4. Html5Qrcode — original file as last resort
    ════════════════════════════════════════════════════════════════════ */
 async function scanPhotoRobust(file) {
   console.log('[FreshTrack] file:', file.name, file.type, 'size:', file.size);
 
-  // Object URL lets libraries load the file as-is (no size limit issues,
-  // browser applies EXIF when the library creates its own <img> element)
   const objURL = URL.createObjectURL(file);
 
   try {
 
-    // ── Strategy 1: QuaggaJS (original file, multiple patch sizes) ───────
+    // ── Strategy 1: ZXing decodeFromImageUrl — full resolution ────────────
+    // ZXing creates its own <img src=objURL>, browser applies EXIF,
+    // ZXing draws to its internal canvas at native size. No scaling loss.
+    const zx = window.ZXing;
+    if (zx?.BrowserMultiFormatReader && zx?.DecodeHintType) {
+      console.log('[FreshTrack] ZXing full-res URL decode...');
+      try {
+        const hints = new Map([[zx.DecodeHintType.TRY_HARDER, true]]);
+        const reader = new zx.BrowserMultiFormatReader(hints);
+        const r = await reader.decodeFromImageUrl(objURL);
+        if (r) { console.log('[FreshTrack] ZXing URL hit:', r.getText()); return r.getText(); }
+      } catch(e) { console.log('[FreshTrack] ZXing URL miss:', e?.message); }
+    } else {
+      console.warn('[FreshTrack] ZXing NOT available');
+    }
+
+    // ── Strategy 2: QuaggaJS — high-res first, then fallbacks ────────────
     if (typeof Quagga !== 'undefined') {
       console.log('[FreshTrack] Quagga available, trying...');
-      for (const [size, patch] of [[1600,'large'],[1600,'medium'],[800,'large'],[800,'medium']]) {
+      // [size, patchSize, halfSample, timeoutMs]
+      const combos = [
+        [2560, 'x-large', false, 15000],
+        [2560, 'large',   false, 15000],
+        [1600, 'medium',  true,   8000],
+        [ 800, 'large',   false,  8000],
+      ];
+      for (const [size, patch, halfSample, ms] of combos) {
         try {
-          const code = await quaggaDecode(objURL, size, patch);
-          console.log(`[FreshTrack] Quagga found (size=${size} patch=${patch}):`, code);
+          const code = await quaggaDecode(objURL, size, patch, halfSample, ms);
+          console.log(`[FreshTrack] Quagga hit (${size}px ${patch}):`, code);
           return code;
         } catch(_) {}
       }
       console.log('[FreshTrack] Quagga found nothing');
     } else {
-      console.warn('[FreshTrack] Quagga NOT available (load failed?)');
+      console.warn('[FreshTrack] Quagga NOT available');
     }
 
-    // Load into <img> — browser applies EXIF rotation automatically
-    const img = await loadImg(objURL);
-    const nw = img.naturalWidth, nh = img.naturalHeight;
-    console.log('[FreshTrack] img natural size (EXIF corrected by browser):', nw, '×', nh);
-
-    // Scale for canvas — cap at 1920px on longest side
-    const scale = Math.min(1, 1920 / Math.max(nw, nh));
-    const w = Math.round(nw * scale);
-    const h = Math.round(nh * scale);
-
-    // ── Strategy 2: BarcodeDetector ───────────────────────────────────────
-    if ('BarcodeDetector' in window) {
-      console.log('[FreshTrack] BarcodeDetector available, trying...');
-      let det;
-      try {
-        const fmts = await BarcodeDetector.getSupportedFormats();
-        console.log('[FreshTrack] formats:', fmts);
-        det = new BarcodeDetector({ formats: fmts.length ? fmts : ['ean_13','ean_8','upc_a','upc_e','code_128'] });
-      } catch(_) { try { det = new BarcodeDetector(); } catch(_) {} }
-
-      if (det) {
-        // First pass: detect directly from the <img> element
-        // (no canvas — browser has already applied EXIF)
-        try {
-          const r = await det.detect(img);
-          if (r.length) { console.log('[FreshTrack] BD direct hit:', r[0].rawValue); return r[0].rawValue; }
-        } catch(_) {}
-
-        // Second pass: canvas at all 4 rotations
-        for (const angle of [0, 90, 180, 270]) {
-          try {
-            const c = makeRotatedCanvas(img, angle, w, h);
-            const r = await det.detect(c);
-            if (r.length) { console.log(`[FreshTrack] BD canvas ${angle}°:`, r[0].rawValue); return r[0].rawValue; }
-          } catch(_) {}
-        }
-        console.log('[FreshTrack] BarcodeDetector found nothing');
-      }
-    } else {
-      console.warn('[FreshTrack] BarcodeDetector NOT available');
-    }
-
-    // ── Strategy 3: ZXing (canvas rotations from img) ─────────────────────
-    const zx = window.ZXing;
+    // ── Strategy 3: ZXing canvas rotations (handles tilted photos) ────────
     if (zx?.BrowserMultiFormatReader && zx?.DecodeHintType) {
-      console.log('[FreshTrack] ZXing available, trying...');
-      const reader = new zx.BrowserMultiFormatReader(new Map([[zx.DecodeHintType.TRY_HARDER, true]]));
+      console.log('[FreshTrack] ZXing canvas rotations...');
+      const img = await loadImg(objURL);
+      const nw = img.naturalWidth, nh = img.naturalHeight;
+      console.log('[FreshTrack] img size (EXIF corrected):', nw, '×', nh);
+      // Near-full resolution — cap at 3000px only to avoid OOM
+      const scale = Math.min(1, 3000 / Math.max(nw, nh));
+      const w = Math.round(nw * scale), h = Math.round(nh * scale);
+
+      const hints = new Map([[zx.DecodeHintType.TRY_HARDER, true]]);
+      const reader = new zx.BrowserMultiFormatReader(hints);
       for (const angle of [0, 90, 180, 270]) {
         try {
           const c = makeRotatedCanvas(img, angle, w, h);
           const r = reader.decodeFromCanvas(c);
-          if (r) { console.log(`[FreshTrack] ZXing ${angle}°:`, r.getText()); return r.getText(); }
+          if (r) { console.log(`[FreshTrack] ZXing canvas ${angle}°:`, r.getText()); return r.getText(); }
         } catch(_) {}
       }
-      console.log('[FreshTrack] ZXing found nothing');
-    } else {
-      console.warn('[FreshTrack] ZXing NOT available');
+      console.log('[FreshTrack] ZXing canvas found nothing');
     }
 
     // ── Strategy 4: Html5Qrcode ────────────────────────────────────────────
@@ -464,16 +448,18 @@ function loadImg(url) {
   });
 }
 
-/* QuaggaJS single-image decode — promisified with 8 s timeout */
-function quaggaDecode(src, size, patchSize) {
+/* QuaggaJS single-image decode — promisified
+   halfSample:false = process at full patch resolution (more accurate, slower)
+   halfSample:true  = half resolution (faster, enough for large barcodes) */
+function quaggaDecode(src, size, patchSize, halfSample = false, timeoutMs = 8000) {
   return new Promise((resolve, reject) => {
-    const t = setTimeout(() => reject(new Error('Quagga timeout')), 8000);
+    const t = setTimeout(() => reject(new Error('Quagga timeout')), timeoutMs);
     Quagga.decodeSingle({
       src,
       numOfWorkers: 0,
       locate: true,
       inputStream: { size },
-      locator:  { patchSize, halfSample: size > 800 },
+      locator:  { patchSize, halfSample },
       decoder:  {
         readers: ['ean_reader','ean_8_reader','upc_reader','upc_e_reader','code_128_reader','code_39_reader'],
         multiple: false,
